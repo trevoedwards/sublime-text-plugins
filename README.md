@@ -33,3 +33,7 @@ platforms.
 Sublime Text 4. Plugins are written for Python 3.8, so they run on both the
 Python 3.8 plugin host (older Sublime Text 4 builds) and the Python 3.14 host
 that replaced it in build 4213.
+
+## License
+
+[MIT](LICENSE) © Trevor Edwards
