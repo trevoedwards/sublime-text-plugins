@@ -1,0 +1,18 @@
+[
+    {
+        "caption": "Markdown Viewer: Toggle Preview",
+        "command": "markdown_viewer_toggle_preview"
+    },
+    {
+        "caption": "Markdown Viewer: Open in Browser",
+        "command": "markdown_viewer_open_in_browser"
+    },
+    {
+        "caption": "Preferences: Markdown Viewer Settings",
+        "command": "edit_settings",
+        "args": {
+            "base_file": "${packages}/MarkdownViewer/MarkdownViewer.sublime-settings",
+            "default": "{\n\t$0\n}\n"
+        }
+    }
+]

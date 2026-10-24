@@ -1,0 +1,15 @@
+{
+    // Re-render the preview while you type.
+    "live_update": true,
+
+    // Milliseconds to wait after the last edit before re-rendering.
+    "update_delay": 300,
+
+    // Show a leading YAML (---) or TOML (+++) front matter block as a muted
+    // code block. Set to false to hide it.
+    "show_front_matter": true,
+
+    // Syntax highlight fenced code blocks that name a language, using your
+    // installed syntaxes and color scheme.
+    "syntax_highlighting": true,
+}
