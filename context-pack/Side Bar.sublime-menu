@@ -1,0 +1,4 @@
+[
+    { "caption": "Context Pack: Preview Selected Files / Folders", "command": "context_pack", "args": { "mode": "sidebar", "files": [], "dirs": [] } },
+    { "caption": "Context Pack: Preview Selected Files / Folders with Git Diff", "command": "context_pack", "args": { "mode": "sidebar", "files": [], "dirs": [], "include_diff": true } }
+]

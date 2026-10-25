@@ -1,0 +1,13 @@
+[
+    { "caption": "Context Pack: Preview Selection (or Current File)", "command": "context_pack", "args": { "mode": "selection" } },
+    { "caption": "Context Pack: Preview Current File", "command": "context_pack", "args": { "mode": "file" } },
+    { "caption": "Context Pack: Preview Open Text Buffers", "command": "context_pack", "args": { "mode": "tabs" } },
+    { "caption": "Context Pack: Choose Project Files", "command": "context_pack", "args": { "mode": "files" } },
+    { "caption": "Context Pack: Preview Changed Files with Git Diff", "command": "context_pack", "args": { "mode": "changed", "include_diff": true } },
+    { "caption": "Context Pack: Copy Preview", "command": "context_pack_copy_preview" },
+    {
+        "caption": "Preferences: Context Pack Settings",
+        "command": "edit_settings",
+        "args": { "base_file": "${packages}/ContextPack/ContextPack.sublime-settings", "default": "{\n\t$0\n}\n" }
+    }
+]

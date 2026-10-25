@@ -1,0 +1,20 @@
+{
+    "max_file_bytes": 262144,
+    "max_pack_bytes": 1048576,
+    "max_files": 50,
+    "max_scan_files": 3000,
+    "git_timeout": 5,
+    "respect_gitignore": true,
+    "include_git_diff": false,
+    "allow_env_examples": true,
+    "extra_exclude_globs": [],
+    "exclude_globs": [
+        ".git", ".hg", ".svn", ".ssh", ".aws", "node_modules", "vendor",
+        "build", "dist", "target", ".venv", "venv", "__pycache__", ".next",
+        "*.pem", "*.key", "*.p12", "*.pfx", "*.crt", "*.cer", "*.der",
+        "id_rsa*", "id_ed25519*", "credentials*", "secrets.*",
+        ".npmrc", ".pypirc", ".netrc", ".git-credentials", ".envrc", "*.env",
+        ".kube", ".gnupg", "id_ecdsa*", "id_dsa*", "*.ppk", "*.kdbx",
+        "*.jks", "*.keystore", "*.tfstate*", "*.tfvars", ".htpasswd"
+    ]
+}

@@ -1,0 +1,7 @@
+{
+    "live_validation": true,
+    "validation_delay": 400,
+    "inline_diagnostics": true,
+    "max_analysis_bytes": 2097152,
+    "max_binary_bytes": 8388608
+}

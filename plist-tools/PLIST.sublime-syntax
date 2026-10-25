@@ -1,0 +1,103 @@
+%YAML 1.2
+---
+name: PLIST
+file_extensions:
+  - plist
+  - mobileconfig
+  - entitlements
+scope: text.xml.plist
+first_line_match: '^\s*(?:<\?xml[^>]+>\s*)?<plist\b'
+contexts:
+  main:
+    - match: '<!--'
+      scope: punctuation.definition.comment.begin.xml
+      push:
+        - meta_scope: comment.block.xml
+        - match: '-->'
+          scope: punctuation.definition.comment.end.xml
+          pop: true
+    - match: '<\?xml\b'
+      scope: punctuation.definition.tag.begin.xml
+      push:
+        - meta_scope: meta.tag.preprocessor.xml
+        - match: '\?>'
+          scope: punctuation.definition.tag.end.xml
+          pop: true
+        - include: attributes
+    - match: '<!DOCTYPE\b'
+      scope: keyword.declaration.doctype.xml
+      push:
+        - meta_scope: meta.tag.sgml.doctype.xml
+        - match: '>'
+          scope: punctuation.definition.tag.end.xml
+          pop: true
+        - include: attributes
+    - match: '(<)(key)(>)'
+      captures:
+        1: punctuation.definition.tag.begin.xml
+        2: entity.name.tag.plist
+        3: punctuation.definition.tag.end.xml
+      push:
+        - meta_scope: meta.key.plist
+        - match: '(</)(key)(>)'
+          captures:
+            1: punctuation.definition.tag.begin.xml
+            2: entity.name.tag.plist
+            3: punctuation.definition.tag.end.xml
+          pop: true
+        - include: entities
+        - match: '[^<&]+'
+          scope: entity.other.attribute-name.plist
+    - match: '(<)(string)(>)'
+      captures:
+        1: punctuation.definition.tag.begin.xml
+        2: entity.name.tag.plist
+        3: punctuation.definition.tag.end.xml
+      push:
+        - meta_scope: string.unquoted.plist
+        - match: '</string\s*>'
+          scope: entity.name.tag.plist
+          pop: true
+        - include: entities
+        - match: '<!--'
+          push:
+            - meta_scope: comment.block.xml
+            - match: '-->'
+              pop: true
+    - match: '(</?)(integer|real|date|data)(\s*/?>)'
+      captures:
+        1: punctuation.definition.tag.begin.xml
+        2: storage.type.plist
+        3: punctuation.definition.tag.end.xml
+    - match: '(<)(true|false)(\s*/>)'
+      scope: constant.language.boolean.plist
+    - match: '(</?)(plist|dict|array|true|false|key|string)\b'
+      captures:
+        1: punctuation.definition.tag.begin.xml
+        2: entity.name.tag.plist
+      push:
+        - match: '/?>'
+          scope: punctuation.definition.tag.end.xml
+          pop: true
+        - include: attributes
+    - include: entities
+    - match: '</?[A-Za-z_:][\w:.-]*'
+      scope: invalid.illegal.unknown-tag.plist
+    - match: '[+-]?\b(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?\b'
+      scope: constant.numeric.plist
+  attributes:
+    - match: '[\w:-]+(?=\s*=)'
+      scope: entity.other.attribute-name.xml
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.xml
+        - match: '"'
+          pop: true
+    - match: "'"
+      push:
+        - meta_scope: string.quoted.single.xml
+        - match: "'"
+          pop: true
+  entities:
+    - match: '&(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);'
+      scope: constant.character.entity.xml

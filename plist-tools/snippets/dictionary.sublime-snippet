@@ -1,0 +1,5 @@
+<snippet><content><![CDATA[<dict>
+	<key>${1:Name}</key>
+	<string>${2:Value}</string>
+	$0
+</dict>]]></content><tabTrigger>dict</tabTrigger><scope>text.xml.plist</scope><description>PLIST dictionary</description></snippet>

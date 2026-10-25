@@ -1,0 +1,3 @@
+<snippet><content><![CDATA[<array>
+	$0
+</array>]]></content><tabTrigger>array</tabTrigger><scope>text.xml.plist</scope><description>PLIST array</description></snippet>

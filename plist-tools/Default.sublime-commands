@@ -1,0 +1,12 @@
+[
+    { "caption": "Plist Tools: Validate and Jump to Error", "command": "plist_tools_validate" },
+    { "caption": "Plist Tools: Format XML (Preserve Comments and Order)", "command": "plist_tools_format" },
+    { "caption": "Plist Tools: Search Outline / Go to Key Path", "command": "plist_tools_outline" },
+    { "caption": "Plist Tools: Copy Current Key Path", "command": "plist_tools_copy_key_path" },
+    { "caption": "Plist Tools: Toggle Boolean", "command": "plist_tools_toggle_boolean" },
+    { "caption": "Plist Tools: Convert Source to Binary", "command": "plist_tools_convert", "args": { "output_format": "binary" } },
+    { "caption": "Plist Tools: Convert Source to XML", "command": "plist_tools_convert", "args": { "output_format": "xml" } },
+    { "caption": "Plist Tools: Export PLIST Copy As…", "command": "plist_tools_save_as" },
+    { "caption": "Plist Tools: Recover Pending Edits", "command": "plist_tools_recover" },
+    { "caption": "Preferences: Plist Tools Settings", "command": "edit_settings", "args": { "base_file": "${packages}/PlistTools/PlistTools.sublime-settings", "default": "{\n\t$0\n}\n" } }
+]
