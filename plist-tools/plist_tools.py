@@ -22,6 +22,7 @@ _tickets = {}
 _saving = set()
 _failed_save = {}
 _opening = {}
+_recovery_initialized = set()
 
 
 def settings():
@@ -181,6 +182,7 @@ def _finish_working_open(working):
                 or os.path.normcase(os.path.abspath(working.file_name())) != os.path.normcase(os.path.abspath(expected))):
             raise PlistError("The XML working copy could not be opened. The original has not been changed.")
         _bind(working, meta_path, meta)
+        _recovery_initialized.add(working.buffer_id())
         window = working.window()
         window.set_view_index(working, group, index)
         window.focus_view(working)
@@ -222,13 +224,17 @@ def _prepare(view):
     if recovery and os.path.isfile(meta_path):
         try:
             meta = _read_meta(meta_path)
+            first_prepare = view.buffer_id() not in _recovery_initialized
             _bind(view, meta_path, meta)
             snapshot = _snapshot_path(view)
-            if meta.get("working_pending") and os.path.isfile(snapshot) and not view.is_dirty():
+            if first_prepare and meta.get("working_pending") and os.path.isfile(snapshot) and not view.is_dirty():
                 with open(snapshot, "r", encoding="utf-8", newline="") as handle:
-                    recovered = handle.read()
+                    recovered = handle.read().replace("\r\n", "\n").replace("\r", "\n")
                 if recovered != _text(view):
                     view.run_command("plist_tools_replace", {"text": recovered})
+            # Metadata binding alone does not initialize recovery: pathless
+            # session restores and lazy clone binding can happen before this.
+            _recovery_initialized.add(view.buffer_id())
             _check_conflict(view)
             _schedule(view)
         except (OSError, ValueError) as error:
@@ -290,7 +296,7 @@ def _prepare(view):
             snapshot = os.path.splitext(meta_path)[0] + ".pending"
             recovery_path = snapshot if old.get("working_pending") and os.path.isfile(snapshot) else work
             with open(recovery_path, "r", encoding="utf-8", newline="") as handle:
-                recovery_text = handle.read()
+                recovery_text = handle.read().replace("\r\n", "\n").replace("\r", "\n")
             if (old.get("pending") or text_hash(recovery_text) != old.get("saved_text_hash")
                     or old.get("fingerprint") == before):
                 meta = old
@@ -336,6 +342,7 @@ def _save_source(view, target=None, output_format=None):
     snapshot = _snapshot_path(view)
     atomic_write(snapshot, source.encode("utf-8"), fingerprint(snapshot))
     write_metadata(view.settings().get(META), meta)
+    _recovery_initialized.add(view.buffer_id())
     result = atomic_write(destination, payload, expected)
     if target and os.path.normcase(destination) != os.path.normcase(meta["source"]):
         # Save As exports a copy, keeping the source association explicit.
@@ -374,6 +381,7 @@ def _persist_pending(view, error):
         snapshot = _snapshot_path(view)
         atomic_write(snapshot, _text(view).encode("utf-8"), fingerprint(snapshot))
         write_metadata(view.settings().get(META), meta)
+        _recovery_initialized.add(view.buffer_id())
         _bind(view, view.settings().get(META), meta)
     except (OSError, ValueError) as recovery_error:
         _error("Save failed, and recovery could not be written: {}. Keep this buffer open.".format(recovery_error))
@@ -539,7 +547,11 @@ class PlistToolsConvertCommand(sublime_plugin.TextCommand):
             # A fresh view also isolates file-association history during XML to
             # binary conversion. The original closes before its bytes change.
             text = _text(view)
-            binary_from_xml(text)  # validate before creating recovery state
+            if output_format == "binary":
+                binary_from_xml(text)
+            else:
+                xml_bytes(text)
+            # Validate the requested representation before creating recovery state.
             if not view.window():
                 raise PlistError("The original view must be in a window before converting it.")
             if view.clones():
@@ -584,6 +596,9 @@ class PlistToolsRevertCommand(sublime_plugin.TextCommand):
                 raise PlistError("Source exceeds the configured max_binary_bytes limit.")
             binary = data.startswith(b"bplist00")
             text = load_binary(data) if binary else data.decode("utf-8-sig")
+            # Sublime buffers expose LF line endings. Keep recovery bytes and
+            # hashes in that logical form; encoded character references survive.
+            text = text.replace("\r\n", "\n").replace("\r", "\n")
             parse_xml(text)
             if fingerprint(meta["source"]) != before:
                 raise ConflictError("Source changed while reloading.")
@@ -716,6 +731,8 @@ class PlistToolsListener(sublime_plugin.EventListener):
     def on_close(self, view):
         _analysis.pop(view.id(), None)
         _tickets.pop(view.id(), None)
+        if not view.clones():
+            _recovery_initialized.discard(view.buffer_id())
 
     def on_text_command(self, view, command_name, args):
         if not _source(view) or view.settings().get(INTERNAL):
@@ -784,6 +801,7 @@ def plugin_unloaded():
     # Native save can only write XML recovery, never overwrite a binary source.
     _analysis.clear()
     _tickets.clear()
+    _recovery_initialized.clear()
     for original, meta_path, meta, group, index, was_read_only, after_open in _opening.values():
         if original.is_valid():
             original.settings().erase("plist_tools_opening_work")

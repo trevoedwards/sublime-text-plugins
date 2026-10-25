@@ -136,6 +136,9 @@ def parse_xml(source):
     parser.StartDoctypeDeclHandler = doctype
     parser.ProcessingInstructionHandler = instruction
     parser.ExternalEntityRefHandler = lambda *args: 0
+    # With an external DOCTYPE, Expat can skip undeclared entities instead of
+    # raising an XML error. Never let a misspelled entity silently lose text.
+    parser.SkippedEntityHandler = lambda name, is_parameter: fail("Undefined entity &{};.".format(name))
     try:
         parser.Parse(source, True)
     except expat.ExpatError as error:

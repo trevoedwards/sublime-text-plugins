@@ -32,7 +32,7 @@ elements. Snippets provide `plist`, `dict`, `array`, `string`, `integer`, `real`
 `bool`, `date`, and `data`; type a trigger and press Tab.
 
 Validation checks the actual XML source, including duplicate keys, unknown
-elements, unexpected attributes, dictionary key/value pairing, scalar types,
+elements, undefined entities, unexpected attributes, dictionary key/value pairing, scalar types,
 dates, integer ranges and base64. The first error appears inline and in the
 gutter/status bar. **Validate and Jump to Error** moves the caret to it. XML
 files use normal Sublime saves, including the ability to save unfinished XML;
@@ -111,7 +111,10 @@ Source changes are detected on activation and before every commit. There is no
 silent merge or overwrite; use Revert to accept disk changes, or export edits
 to another path. Atomic replacement uses a temporary file in the source's own
 directory, flushes it, and retains file mode. Windows replacement preserves
-destination ACLs and alternate streams. Fingerprints are checked immediately
+destination ACLs and alternate streams. Windows replacement keeps an original-file
+backup until replacement succeeds; a partial failure restores the original when
+possible and reports the retained backup path if restoration cannot finish.
+Fingerprints are checked immediately
 before replacement; as with other portable file writers, an uncooperative
 writer can still race in the final check-to-replace interval. Symbolic links,
 special files and files with multiple hard links are rejected for managed

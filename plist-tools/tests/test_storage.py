@@ -6,7 +6,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from plist_storage import ConflictError, atomic_write, fingerprint
+from plist_storage import ConflictError, atomic_write, fingerprint, text_hash, _replace_windows
 
 
 class AtomicWriteTests(unittest.TestCase):
@@ -64,6 +64,54 @@ class AtomicWriteTests(unittest.TestCase):
         os.link(self.path, other)
         with self.assertRaises(OSError):
             fingerprint(self.path)
+
+    def test_text_hash_uses_logical_line_endings(self):
+        self.assertEqual(text_hash("one\ntwo\n"), text_hash("one\r\ntwo\r\n"))
+        self.assertEqual(text_hash("one\ntwo\n"), text_hash("one\rtwo\r"))
+        self.assertNotEqual(text_hash("&#13;"), text_hash("\n"))
+
+    def windows_failure(self, code, effect):
+        replacement = os.path.join(self.directory.name, "replacement")
+        with open(replacement, "wb") as handle:
+            handle.write(b"new")
+        failure = OSError(code, "simulated Windows replacement failure")
+        call = mock.Mock(side_effect=effect)
+        dll = mock.Mock(ReplaceFileW=call)
+        with mock.patch("ctypes.WinDLL", return_value=dll, create=True), \
+                mock.patch("ctypes.get_last_error", return_value=code, create=True), \
+                mock.patch("ctypes.WinError", return_value=failure, create=True):
+            with self.assertRaises(OSError):
+                _replace_windows(self.path, replacement)
+        self.assertIsNotNone(call.call_args[0][2])
+        return replacement
+
+    def test_windows_failed_move_keeps_original_name_with_backup(self):
+        def fail(path, replacement, backup, *args):
+            # Windows error 1176 retains both names when a backup was requested.
+            self.assertTrue(backup)
+            return False
+        replacement = self.windows_failure(1176, fail)
+        self.assertEqual(b"original", self.read())
+        self.assertTrue(os.path.exists(replacement))
+
+    def test_windows_partial_move_restores_original_from_backup(self):
+        def fail(path, replacement, backup, *args):
+            os.replace(path, backup)
+            return False
+        replacement = self.windows_failure(1177, fail)
+        self.assertEqual(b"original", self.read())
+        self.assertFalse(os.path.exists(replacement + ".original"))
+
+    def test_windows_partial_move_does_not_overwrite_concurrent_destination(self):
+        def fail(path, replacement, backup, *args):
+            os.replace(path, backup)
+            with open(path, "wb") as handle:
+                handle.write(b"concurrent")
+            return False
+        replacement = self.windows_failure(1177, fail)
+        self.assertEqual(b"concurrent", self.read())
+        with open(replacement + ".original", "rb") as handle:
+            self.assertEqual(b"original", handle.read())
 
 
 if __name__ == "__main__":

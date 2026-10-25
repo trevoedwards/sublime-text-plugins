@@ -187,6 +187,7 @@ class LifecycleTests(unittest.TestCase):
                 del sys.modules[key]
 
     def setUp(self):
+        self.plugin._recovery_initialized.clear()
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.recovery_patch = mock.patch.object(self.plugin, "_recovery_dir", return_value=os.path.join(self.temp.name, "recovery"))
@@ -344,6 +345,66 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn("pending", reopened.name)
         self.assertTrue(reopened.dirty)
 
+    def test_activation_and_clone_do_not_reapply_failed_save_after_undo(self):
+        baseline = self.view.text
+        self.view.text = "unfinished XML"
+        self.assertFalse(self.plugin._save(self.view))
+        # Undo returns the shared buffer to its clean recovery-file revision.
+        self.view.text = baseline
+        self.view.dirty = False
+        clone = View(self.work, baseline, self.plugin)
+        clone.dirty = False
+        listener = self.plugin.PlistToolsListener()
+        with mock.patch.object(self.plugin, "_recovery_dir", return_value=self.temp.name), \
+                mock.patch.object(clone, "buffer_id", return_value=self.view.buffer_id()):
+            listener.on_activated(self.view)
+            listener.on_activated(self.view)
+            listener.on_clone(clone)
+        self.assertEqual(baseline, self.view.text)
+        self.assertFalse(self.view.dirty)
+        self.assertEqual(baseline, clone.text)
+        self.assertFalse(clone.dirty)
+        self.assertEqual(self.source, clone.values[self.plugin.SOURCE])
+        self.assertFalse(any(command == "plist_tools_replace" for command, _ in self.view.commands + clone.commands))
+
+    def test_pending_snapshot_does_not_overwrite_dirty_session_restore(self):
+        self.view.text = "failed older edit"
+        self.assertFalse(self.plugin._save(self.view))
+        restored = View(self.work, "newer hot exit edit", self.plugin)
+        with mock.patch.object(self.plugin, "_recovery_dir", return_value=self.temp.name):
+            self.plugin._prepare(restored)
+        self.assertEqual("newer hot exit edit", restored.text)
+        self.assertTrue(restored.dirty)
+        self.assertEqual(self.source, restored.values[self.plugin.SOURCE])
+
+    def test_clean_pathless_session_restores_pending_snapshot_after_rebinding(self):
+        baseline = self.view.text
+        self.view.text = "pending pathless edit"
+        self.assertFalse(self.plugin._save(self.view))
+        self.view.path = None
+        self.view.text = baseline
+        self.view.dirty = False
+        self.plugin._recovery_initialized.clear()  # models a plugin/session reload
+        with mock.patch.object(self.plugin, "_recovery_dir", return_value=self.temp.name):
+            self.plugin._prepare(self.view)
+        self.assertEqual(self.work, self.view.path)
+        self.assertEqual("pending pathless edit", self.view.text)
+        self.assertTrue(self.view.dirty)
+        self.assertEqual(self.source, self.view.values[self.plugin.SOURCE])
+
+    def test_lazy_source_binding_does_not_suppress_initial_pending_restore(self):
+        baseline = self.view.text
+        self.view.text = "pending lazy-bound edit"
+        self.assertFalse(self.plugin._save(self.view))
+        restored = View(self.work, baseline, self.plugin)
+        restored.dirty = False
+        self.plugin._recovery_initialized.clear()
+        with mock.patch.object(self.plugin, "_recovery_dir", return_value=self.temp.name):
+            self.assertEqual(self.source, self.plugin._source(restored))
+            self.plugin._prepare(restored)
+        self.assertEqual("pending lazy-bound edit", restored.text)
+        self.assertTrue(restored.dirty)
+
     def test_clone_without_settings_routes_save_to_binary_source(self):
         clone = View(self.work, self.view.text, self.plugin)
         with mock.patch.object(self.plugin, "_recovery_dir", return_value=self.temp.name):
@@ -452,6 +513,43 @@ class LifecycleTests(unittest.TestCase):
         with open(xml_path, "rb") as handle:
             self.assertEqual({"version": 9}, plistlib.load(handle))
         self.assertEqual(xml_path, working.values[self.plugin.SOURCE])
+
+    def test_xml_conversion_does_not_require_safe_binary_serialization(self):
+        xml_path = os.path.join(self.temp.name, "signed-zero.plist")
+        xml = plistlib.dumps([0.0, -0.0]).decode()
+        with open(xml_path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(xml)
+        original = View(xml_path, xml, self.plugin)
+        window = Window(self.plugin, original)
+        os.makedirs(os.path.join(self.temp.name, "recovery"))
+        with mock.patch.object(self.plugin, "binary_from_xml", side_effect=AssertionError("XML must not validate through binary")) as binary:
+            original.run_command("plist_tools_convert", {"output_format": "xml"})
+        binary.assert_not_called()
+        self.assertTrue(original.closed)
+        working = window.active_view()
+        self.assertEqual("xml", self.plugin._meta(working)["format"])
+        with open(xml_path, "rb") as handle:
+            self.assertEqual(xml.encode("utf-8"), handle.read())
+
+    def test_crlf_xml_revert_and_save_leave_no_false_pending_recovery(self):
+        xml = '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0">\n<dict><key>line</key><string>a&#13;b</string></dict>\n</plist>\n'
+        with open(self.source, "wb") as handle:
+            handle.write(xml.replace("\n", "\r\n").encode("utf-8"))
+        self.view.dirty = False
+        action = self.plugin.PlistToolsRevertCommand()
+        action.view = self.view
+        action.run(None)
+        self.assertEqual(xml, self.view.text)
+        with open(self.work, "rb") as handle:
+            self.assertEqual(xml.encode("utf-8"), handle.read())
+        self.assertTrue(self.plugin._save(self.view))
+        self.assertEqual(self.storage.text_hash(self.view.text), self.plugin._meta(self.view)["saved_text_hash"])
+        self.assertEqual({"line": "a\rb"}, self.source_value())
+        recovery = self.plugin.PlistToolsRecoverCommand()
+        recovery.window = types.SimpleNamespace(show_quick_panel=mock.Mock())
+        with mock.patch.object(self.plugin, "_recovery_dir", return_value=self.temp.name):
+            recovery.run()
+        recovery.window.show_quick_panel.assert_not_called()
 
 
 if __name__ == "__main__":

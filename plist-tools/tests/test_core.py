@@ -79,6 +79,19 @@ class ParserTests(unittest.TestCase):
         with self.assertRaises(PlistError):
             parse_xml('<!DOCTYPE plist [<!ENTITY x "hello">]>' + wrap('<string>&x;</string>'))
 
+    def test_standard_apple_doctype_rejects_undefined_entities(self):
+        doctype = '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+        for body in ('<string>Tom&nbsp;Jerry</string>',
+                     '<dict><key>a&missing;</key><string>value</string></dict>'):
+            source = doctype + wrap(body)
+            with self.subTest(body=body):
+                with self.assertRaisesRegex(PlistError, "Undefined entity"):
+                    parse_xml(source)
+                with self.assertRaises(PlistError):
+                    binary_from_xml(source)
+        valid = doctype + wrap('<string>Tom&amp;&#160;Jerry</string>')
+        self.assertEqual("Tom&\u00a0Jerry", parse_xml(valid).value)
+
     def test_format_preserves_scalar_spelling_comments_and_order(self):
         source = '<?xml version="1.0"?>\n<!-- header -->\n' + wrap(
             '<dict> <key>z</key><!-- comment --><string>  keep\n  this &amp; that </string>'
