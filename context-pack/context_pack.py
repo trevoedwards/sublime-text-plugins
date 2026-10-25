@@ -49,15 +49,24 @@ def capture(window, options):
     """Only called on Sublime's main thread; workers never touch views/settings."""
     roots = list(window.folders())
     active = window.active_view()
-    if not roots and eligible(active) and source_path(active):
-        roots = [os.path.dirname(source_path(active))]
+    source_views = [view for view in window.views() if eligible(view) and not view.is_scratch()]
+    if not roots:
+        seen_roots = set()
+        for view in source_views:
+            path = source_path(view)
+            if path:
+                parent = os.path.dirname(os.path.abspath(path))
+                if canonical(parent) not in seen_roots:
+                    roots.append(parent)
+                    seen_roots.add(canonical(parent))
     preferences = sublime.load_settings("Preferences.sublime-settings")
-    general = []
+    global_patterns = []
+    view_patterns = []
     for key in ("file_exclude_patterns", "folder_exclude_patterns", "binary_file_patterns"):
-        general.extend(preferences.get(key, []) or [])
+        global_patterns.extend(preferences.get(key, []) or [])
         if eligible(active):
-            general.extend(active.settings().get(key, []) or [])
-    native = {root: list(general) for root in roots}
+            view_patterns.extend(active.settings().get(key, []) or [])
+    native = {root: list(view_patterns) for root in roots}
     project_file = window.project_file_name()
     base = os.path.dirname(project_file) if project_file else os.getcwd()
     for folder in (window.project_data() or {}).get("folders", []):
@@ -65,13 +74,13 @@ def capture(window, options):
         if not path:
             continue
         path = os.path.abspath(os.path.join(base, path))
-        patterns = native.setdefault(path, list(general))
+        patterns = native.setdefault(path, list(view_patterns))
         for key in ("file_exclude_patterns", "folder_exclude_patterns"):
             patterns.extend(folder.get(key, []) or [])
     buffers, requests, seen = {}, [], set()
     remaining = options.max_pack_bytes
-    for view in window.views():
-        if not eligible(view) or view.is_scratch() or view.buffer_id() in seen:
+    for view in source_views:
+        if view.buffer_id() in seen:
             continue
         seen.add(view.buffer_id())
         if view.size() > remaining:
@@ -89,7 +98,7 @@ def capture(window, options):
         requests.append(request)
         if request.path:
             buffers[canonical(request.path)] = request
-    return roots, native, buffers, requests
+    return roots, native, global_patterns, buffers, requests
 
 
 def show_preview(window, text):
@@ -120,7 +129,7 @@ class ContextPackCommand(sublime_plugin.WindowCommand):
         options = Options.from_dict(data)
         if include_diff is None:
             include_diff = bool(settings.get("include_git_diff", False))
-        roots, native, buffers, tab_requests = capture(self.window, options)
+        roots, native, global_patterns, buffers, tab_requests = capture(self.window, options)
         active = self.window.active_view()
         if mode in ("selection", "file"):
             if not eligible(active):
@@ -138,7 +147,7 @@ class ContextPackCommand(sublime_plugin.WindowCommand):
         window = self.window
 
         def worker():
-            collector = Collector(roots, options, native)
+            collector = Collector(roots, options, native, global_patterns)
             try:
                 if mode == "sidebar":
                     chosen = collector.expand(paths)
@@ -149,7 +158,7 @@ class ContextPackCommand(sublime_plugin.WindowCommand):
                         if repo and canonical(repo) not in {canonical(r) for r in repositories}:
                             repositories.append(repo)
                     if mode == "changed" and not repositories:
-                        collector.notes.append("No Git repository found in the open project folders or active file folder.")
+                        collector.notes.append("No Git repository found in the open project folders or folders containing open source buffers.")
                     chosen = []
                     for repo in repositories:
                         remaining = options.max_scan_files - len(chosen)

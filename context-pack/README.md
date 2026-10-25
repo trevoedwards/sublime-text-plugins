@@ -52,6 +52,12 @@ Files / Folders**, with or without a Git diff. Folder traversal is bounded and
 does not follow symlinks or junctions. Open buffers override disk content for
 matching paths, including files chosen in the sidebar or picker.
 
+With no project folders open, file discovery uses the parent folders of eligible
+source tabs, including the original paths of managed Plist Tools buffers. An
+active preview or untitled tab does not hide those roots. Open project folders
+keep discovery scoped to those folders. Global Sublime exclusions also apply
+to buffers outside project roots; folder-specific project rules stay scoped.
+
 Every operation creates a new **read-only scratch Markdown preview**. Review
 its contents and skipped-file report, then run **Copy Preview** explicitly.
 Generation does not change the clipboard. Previews are snapshots; regenerate

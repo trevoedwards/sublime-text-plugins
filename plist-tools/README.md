@@ -2,8 +2,9 @@
 
 PLIST editing for Sublime Text 4, using Python 3.8 and the standard library.
 XML files stay XML. Binary files open as typed XML and save back to binary.
-There are no dependencies, background services, default key bindings, or JSON
-conversions of property-list values.
+There are no third-party Python dependencies, background services, default key
+bindings, or JSON conversions of property-list values. Signed profile inspection
+uses an optional local CMS decoder.
 
 ## Installation
 
@@ -57,6 +58,98 @@ working copy and are not included in binary output.
 | Plist Tools: Export PLIST Copy As… | Choose XML/binary and a destination for a separate copy. |
 | Plist Tools: Recover Pending Edits | Open a saved working copy whose source commit is pending. |
 | Preferences: Plist Tools Settings | Open package settings. |
+
+## Apple profiles, Jamf and Intune
+
+Unsigned XML `.mobileconfig` files use the same source-preserving editor as
+other plists. Existing profile/payload identifiers, UUIDs, custom application
+domains, unknown vendor keys and literal MDM substitution tokens are retained.
+Normal editing, formatting and exporting never regenerate profile identities.
+
+| Command Palette command | Action |
+| --- | --- |
+| Plist Tools: New Apple Configuration Profile | Create an unsaved profile with fresh identity metadata and an empty payload array. |
+| Plist Tools: Add Payload Common-Key Scaffold | Enter any Apple or application payload domain; append fresh metadata without changing existing payloads. Configure that domain's settings yourself. |
+| Plist Tools: Check Profile Common Keys | Check the profile envelope and immediate payload dictionaries, with jumpable diagnostics. |
+| Plist Tools: Check Profile for Jamf | Run common checks and explain Jamf import considerations. |
+| Plist Tools: Check Profile for Intune | Run common checks and enforce the 1,000,000-byte UTF-8 XML upload limit. |
+| Plist Tools: Search Profile Payloads | Search payload names, types, identifiers and UUIDs, then jump to their source. Private settings are not included in the picker. |
+| Plist Tools: Insert New UUID | Explicitly replace each selection or insert at each caret with a new UUID. |
+| Plist Tools: Export Unsigned XML Profile Copy… | Validate common keys and write a separate UTF-8 XML `.mobileconfig`; retain existing identities. |
+| Plist Tools: Export Unsigned Profile Copy for Intune… | Export a separate XML copy after checking its exact upload size. |
+| Plist Tools: Inspect Signed Profile | Decode a signed profile from disk into a read-only scratch view. |
+| Plist Tools: Create Editable Unsigned Profile Copy | Copy a decoded inspection into an editable local XML draft. The original signature is not included. |
+| Plist Tools: Recover Unsigned Profile Drafts | Reopen local unsigned drafts and their signed-origin destination protection. |
+
+Common-key checks cover required strings, strict integer version `1`, duplicate
+identifiers/UUIDs, dictionary/array shape, optional metadata types and macOS
+`System`/`User` scope. Empty payload arrays are flagged as scaffolds. UUIDs are
+checked for uniqueness without requiring RFC formatting, so existing opaque
+identities and tokens are accepted. Common key names complete inside `<key>`
+elements, with their expected types and descriptions.
+
+These checks follow Apple's [top-level profile definition](https://github.com/apple/device-management/blob/release/mdm/profiles/TopLevel.yaml)
+and [common payload keys](https://github.com/apple/device-management/blob/release/mdm/profiles/CommonPayloadKeys.yaml).
+They **do not validate every payload's settings or certify deployment**. PPPC,
+system extensions, Wi-Fi, restrictions and custom application preferences can
+all be edited; their platform/version support, setting values and MDM assignment
+still need verification. A new payload scaffold contains common metadata only.
+
+Intune's [custom Apple profile documentation](https://learn.microsoft.com/en-us/intune/device-configuration/templates/configure-custom-settings-apple)
+sets the XML upload limit and describes choosing the deployment channel in
+Intune. Profile `PayloadScope` and that portal choice need to agree with the
+intended deployment; this package does not configure Intune. Jamf's
+[profile upload documentation](https://learn.jamf.com/r/en-US/jamf-pro-documentation-current/Uploading_a_Configuration_Profile_macOS)
+describes different handling of signed and unsigned profiles. Verify the
+uploaded/deployed result when Jamf imports and edits unfamiliar keys. Exporting
+a copy retains identity for updates; creating an independent policy may require
+deliberate identity changes. Nothing is uploaded or deployed by this package.
+
+### Signed profile inspection
+
+Open a signed `.mobileconfig`, then run **Inspect Signed Profile**. DER, streamed
+BER and CMS/PKCS7 PEM containers are recognized. The original raw view stays
+read-only. Decoding runs off the UI thread against a private temporary snapshot;
+the decoded XML opens in a separate read-only scratch tab, where profile checks,
+payload navigation, key paths and copying work normally.
+
+The decoder uses OpenSSL from `openssl_path`, then PATH, then standard Git for
+Windows installation locations. If OpenSSL is unavailable on macOS,
+`/usr/bin/security cms` is used. On Windows, for example, a custom setting is:
+
+```json
+{ "openssl_path": "C:\\Program Files\\Git\\usr\\bin\\openssl.exe" }
+```
+
+The [OpenSSL CMS command](https://docs.openssl.org/3.0/man1/openssl-cms/) verifies
+the content signature with `-verify -noverify`; certificate-chain trust is
+skipped. A bad signature fails rather than falling back to an unchecked decode.
+The macOS fallback uses the platform decoder's policy. **Plist Tools does not
+establish signer trust** on either path. Inspecting a profile does not make it
+safe or appropriate to deploy.
+
+Use **Create Editable Unsigned Profile Copy** to edit decoded contents. The copy
+is attached to a durable private draft in
+`Packages/User/PlistTools/ProfileCopies/<uuid>.mobileconfig`. Ordinary Save and
+native close/quit saves update that draft; Save As opens the separate guarded
+export flow. **Recover Unsigned Profile Drafts** reopens these files. Adjacent
+JSON metadata retains the signed origin for destination protection, including
+after restarting Sublime. Drafts are retained until you remove them and can
+contain profile secrets; treat this directory like your source files.
+
+Save and Save As in a read-only inspection open the export flow. Exports cannot
+target the signed original, its aliases, the attached file or a managed binary
+source. Use ordinary Save to update an editable draft. The exported copy is not automatically opened.
+Existing identifiers are retained. Editing an unsigned copy does not retain or
+re-create the original signature. Re-signing and certificate management are not
+provided.
+
+Encrypted CMS containers are rejected without attempting decryption. An XML
+profile containing `EncryptedPayloadContent` can have its visible envelope
+checked, but encrypted payloads remain opaque. Source and decoded-output limits
+default to 16 MiB, with a 15-second decoder timeout. Reads and diagnostics are
+bounded; temporary decoder output can grow until completion or timeout. These
+temporary files can contain profile secrets and are removed after decoding.
 
 ## Binary saves and recovery
 
@@ -130,10 +223,10 @@ file it points to.
   not the original object-table layout or exact byte encoding.
 - **Legacy OpenStep/ASCII property lists are unsupported.** They are reported
   as invalid PLIST XML and are not silently converted.
-- **Signed or encrypted `.mobileconfig` profiles are unsupported.** Decode or
-  verify them with appropriate platform tooling first. This plugin does not
-  remove signatures, decrypt profiles, or re-sign output. Unsigned XML profiles
-  are ordinary property lists; profile-specific schema validation is not provided.
+- Signed `.mobileconfig` profiles support explicit read-only inspection and
+  separate unsigned copies using an optional local decoder, as described above.
+  Encrypted content cannot be decrypted. Common profile metadata is checked;
+  exhaustive payload-specific schema validation and re-signing are not provided.
 - **Binary archive UID values, null values, cycles, shared container references,
   fractional-second binary dates, strings containing carriage returns, and strings containing XML-forbidden characters
   are unsupported for editing.** Opening them retains the raw file read-only
@@ -160,6 +253,10 @@ file it points to.
 
 `PlistTools.sublime-settings` provides `live_validation`, `validation_delay`
 (400 ms), `inline_diagnostics`, `max_analysis_bytes` and `max_binary_bytes`.
+Profile settings include `profile_identifier_prefix`, `profile_organization`,
+`profile_scope`, `openssl_path`, `signed_decode_timeout`, and
+`max_signed_profile_bytes`. Change `com.example.profile` to your organization's
+prefix when creating new profiles; these defaults never change existing files.
 The PLIST syntax uses tabs by default; normal Sublime indentation settings are
 honored by Format XML.
 

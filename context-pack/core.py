@@ -216,10 +216,11 @@ def ignored_paths(root, paths, options):
 
 
 class Collector:
-    def __init__(self, roots, options=None, native_patterns=None):
+    def __init__(self, roots, options=None, native_patterns=None, global_patterns=None):
         self.options = options or Options()
         self.roots = [os.path.abspath(r) for r in roots]
         self.native = native_patterns or {}
+        self.global_patterns = global_patterns or []
         self.skipped = []
         self.notes = []
         self._repo_cache = {}
@@ -251,7 +252,7 @@ class Collector:
         return max(containing, key=len) if containing else parent
 
     def patterns_for(self, path):
-        patterns = []
+        patterns = list(self.global_patterns)
         for root, values in self.native.items():
             if inside(path, root):
                 patterns.extend(values)
@@ -267,6 +268,12 @@ class Collector:
             return reason
         if self.options.respect_gitignore and canonical(root) in self._marker_errors:
             return "Git repository detected but Git failed; ignore rules could not be verified"
+        # Preferences apply to standalone files and buffers outside project
+        # folders too. The absolute path also exposes excluded ancestor folders
+        # when a standalone file's collection root is its immediate parent.
+        if (matches(os.path.relpath(path, root), self.global_patterns)
+                or matches(os.path.abspath(path), self.global_patterns)):
+            return "excluded by Sublime project/preferences pattern"
         for native_root, patterns in self.native.items():
             if inside(path, native_root) and matches(os.path.relpath(path, native_root), patterns):
                 return "excluded by Sublime project/preferences pattern"

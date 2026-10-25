@@ -3,5 +3,11 @@
     "validation_delay": 400,
     "inline_diagnostics": true,
     "max_analysis_bytes": 2097152,
-    "max_binary_bytes": 8388608
+    "max_binary_bytes": 8388608,
+    "profile_identifier_prefix": "com.example.profile",
+    "profile_organization": "",
+    "profile_scope": "System",
+    "openssl_path": "",
+    "signed_decode_timeout": 15,
+    "max_signed_profile_bytes": 16777216
 }

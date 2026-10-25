@@ -9,7 +9,7 @@ and is installed as a separate package.
 | --- | --- |
 | [Markdown Viewer](markdown-viewer/) | Live GitHub-flavored Markdown preview beside the file, plus Open in Browser. |
 | [Context Pack](context-pack/) | Preview and copy selected code, open buffers, project files, and Git changes as a Markdown context bundle. |
-| [Plist Tools](plist-tools/) | Edit, validate, format, and navigate XML and binary property lists. |
+| [Plist Tools](plist-tools/) | Edit XML/binary plists and Apple profiles, check Jamf/Intune common keys, and inspect signed profiles. |
 
 ## Installing a plugin
 

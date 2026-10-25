@@ -6,6 +6,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 class Region:
@@ -264,6 +265,80 @@ class UITests(unittest.TestCase):
         request = ui.snapshot(view, ui.Options(max_file_bytes=20), selections=True)
         self.assertIsNone(request.error)
         self.assertEqual(request.pieces[0].text, "small")
+
+    def test_changed_discovery_uses_source_tabs_with_preview_or_untitled_active(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first_root = os.path.join(directory, "first")
+            second_root = os.path.join(directory, "second")
+            os.makedirs(first_root)
+            os.makedirs(second_root)
+            first_path = os.path.join(first_root, "first.py")
+            second_path = os.path.join(second_root, "managed.plist")
+            for active_kind in ("preview", "untitled"):
+                with self.subTest(active_kind=active_kind):
+                    first = View("FIRST_SOURCE_BUFFER", path=first_path)
+                    managed = View("SECOND_SOURCE_BUFFER", path=os.path.join(directory, "recovery.plist"))
+                    managed.config["plist_tools_source_path"] = second_path
+                    scratch = View("scratch", path=os.path.join(directory, "scratch", "results.txt"))
+                    scratch.scratch = True
+                    widget = View("widget", path=os.path.join(directory, "widget", "input.txt"))
+                    widget.config["is_widget"] = True
+                    window = Window([first, managed, scratch, widget])
+                    if active_kind == "preview":
+                        ui.show_preview(window, "previous preview")
+                    else:
+                        window.active = View("untitled text")
+                        window.open_views.append(window.active)
+                    roots, _, _, _, _ = ui.capture(window, ui.Options())
+                    self.assertEqual([first_root, second_root], roots)
+
+                    def paths(repo, options, changed=False):
+                        self.assertTrue(changed)
+                        return [first_path] if repo == first_root else [second_path]
+
+                    with mock.patch.object(ui, "git_root", side_effect=lambda path, options: path) as find_root, \
+                            mock.patch.object(ui, "git_paths", side_effect=paths) as find_paths:
+                        ui.ContextPackCommand(window).run(mode="changed", include_diff=False)
+                        self.drain()
+                    self.assertEqual([mock.call(first_root, mock.ANY), mock.call(second_root, mock.ANY)], find_root.call_args_list)
+                    self.assertEqual(2, find_paths.call_count)
+                    self.assertIn("FIRST_SOURCE_BUFFER", window.active.text)
+                    self.assertIn("SECOND_SOURCE_BUFFER", window.active.text)
+                    self.assertNotIn("No Git repository", window.active.text)
+
+    def test_project_folders_keep_discovery_scoped_despite_external_source_tabs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = os.path.join(directory, "project")
+            external = View("external", path=os.path.join(directory, "outside", "file.py"))
+            roots, _, _, _, _ = ui.capture(Window([external], project), ui.Options())
+            self.assertEqual([project], roots)
+
+    def test_global_exclusions_cover_external_buffers_without_project_rule_leakage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = os.path.join(directory, "project")
+            outside = os.path.join(directory, "outside")
+            files = [
+                (os.path.join(project, "source.py"), "PROJECT_VISIBLE"),
+                (os.path.join(project, "project-only.txt"), "PROJECT_HIDDEN"),
+                (os.path.join(outside, "global-hide.txt"), "GLOBAL_FILE_HIDDEN"),
+                (os.path.join(outside, "global-private", "note.txt"), "GLOBAL_FOLDER_HIDDEN"),
+                (os.path.join(outside, "project-only.txt"), "OUTSIDE_VISIBLE"),
+            ]
+            for path, text in files:
+                Path(path).parent.mkdir(parents=True, exist_ok=True)
+                Path(path).write_text(text, encoding="utf-8")
+            window = Window([View(text, path=path) for path, text in files], project)
+            preferences = Settings({"file_exclude_patterns": ["global-hide.txt"], "folder_exclude_patterns": ["global-private"]})
+            with mock.patch.object(fake_sublime, "load_settings", side_effect=lambda name: preferences if name == "Preferences.sublime-settings" else Settings()), \
+                    mock.patch.object(window, "project_data", return_value={"folders": [{"path": project, "file_exclude_patterns": ["project-only.txt"]}]}):
+                ui.ContextPackCommand(window).run(mode="tabs")
+                self.drain()
+            self.assertIn("PROJECT_VISIBLE", window.active.text)
+            self.assertIn("OUTSIDE_VISIBLE", window.active.text)
+            self.assertNotIn("PROJECT_HIDDEN", window.active.text)
+            self.assertNotIn("GLOBAL_FILE_HIDDEN", window.active.text)
+            self.assertNotIn("GLOBAL_FOLDER_HIDDEN", window.active.text)
+            self.assertIn("Sublime project/preferences pattern", window.active.text)
 
 
 if __name__ == "__main__":

@@ -84,21 +84,51 @@ def _paths(source):
     return base + ".plist", base + ".json"
 
 
+def _same_file_path(left, right):
+    """Compare path spellings and existing file identities without assuming volume case rules."""
+    if not left or not right:
+        return False
+    try:
+        if os.path.normcase(os.path.abspath(left)) == os.path.normcase(os.path.abspath(right)):
+            return True
+        return os.path.samefile(left, right)
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _metadata_path(view):
+    path = view.settings().get(META)
+    if not isinstance(path, str) or not path:
+        raise PlistError("The PLIST recovery metadata path is missing or invalid. Keep this buffer open and export its edits.")
+    return path
+
+
 def _read_meta(path):
+    if not isinstance(path, str) or not path:
+        raise PlistError("The PLIST recovery metadata path is missing or invalid.")
     with open(path, "r", encoding="utf-8") as handle:
-        return json.load(handle)
+        meta = json.load(handle)
+    if (not isinstance(meta, dict)
+            or not isinstance(meta.get("source"), str) or not meta.get("source")
+            or meta.get("format") not in ("binary", "xml")
+            or "fingerprint" not in meta
+            or (meta["fingerprint"] is not None and not isinstance(meta["fingerprint"], dict))
+            or not isinstance(meta.get("saved_text_hash"), str)
+            or any(key in meta and not isinstance(meta[key], bool) for key in ("pending", "working_pending"))):
+        raise PlistError("The PLIST recovery metadata is invalid. Keep this buffer open and export its edits.")
+    return meta
 
 
 def _meta(view):
-    return _read_meta(view.settings().get(META))
+    return _read_meta(_metadata_path(view))
 
 
 def _working_path(view):
-    return os.path.splitext(view.settings().get(META))[0] + ".plist"
+    return os.path.splitext(_metadata_path(view))[0] + ".plist"
 
 
 def _snapshot_path(view):
-    return os.path.splitext(view.settings().get(META))[0] + ".pending"
+    return os.path.splitext(_metadata_path(view))[0] + ".pending"
 
 
 def _check_working_target(view):
@@ -108,8 +138,8 @@ def _check_working_target(view):
         # Hot exit can restore a retargeted view as an unnamed buffer.
         view.retarget(expected)
         return
-    if os.path.normcase(os.path.abspath(actual)) != os.path.normcase(os.path.abspath(expected)):
-        if os.path.normcase(os.path.abspath(actual)) == os.path.normcase(os.path.abspath(_source(view))):
+    if not _same_file_path(actual, expected):
+        if _same_file_path(actual, _source(view)):
             view.retarget(expected)
         view.settings().erase(SOURCE)
         view.settings().erase(META)
@@ -135,6 +165,21 @@ def _bind(view, meta_path, meta):
         view.set_status("plist_tools_pending", "PLIST recovery pending: Save to commit, Revert to discard")
     else:
         view.erase_status("plist_tools_pending")
+
+
+def _initialize_recovery(view, meta):
+    """Restore a snapshot once, as an undoable edit over the clean working file."""
+    if view.buffer_id() in _recovery_initialized:
+        return
+    snapshot = _snapshot_path(view)
+    if meta.get("working_pending") and os.path.isfile(snapshot) and not view.is_dirty():
+        with open(snapshot, "r", encoding="utf-8", newline="") as handle:
+            recovered = handle.read().replace("\r\n", "\n").replace("\r", "\n")
+        if recovered != _text(view):
+            view.run_command("plist_tools_replace", {"text": recovered})
+    # Binding alone does not initialize recovery: pathless session restores and
+    # lazy clone binding may happen before this. Never reapply after user Undo.
+    _recovery_initialized.add(view.buffer_id())
 
 
 def _check_conflict(view):
@@ -182,7 +227,10 @@ def _finish_working_open(working):
                 or os.path.normcase(os.path.abspath(working.file_name())) != os.path.normcase(os.path.abspath(expected))):
             raise PlistError("The XML working copy could not be opened. The original has not been changed.")
         _bind(working, meta_path, meta)
-        _recovery_initialized.add(working.buffer_id())
+        signed_source = original.settings().get("plist_tools_signed_source")
+        if signed_source:
+            working.settings().set("plist_tools_signed_source", signed_source)
+        _initialize_recovery(working, meta)
         window = working.window()
         window.set_view_index(working, group, index)
         window.focus_view(working)
@@ -224,17 +272,8 @@ def _prepare(view):
     if recovery and os.path.isfile(meta_path):
         try:
             meta = _read_meta(meta_path)
-            first_prepare = view.buffer_id() not in _recovery_initialized
             _bind(view, meta_path, meta)
-            snapshot = _snapshot_path(view)
-            if first_prepare and meta.get("working_pending") and os.path.isfile(snapshot) and not view.is_dirty():
-                with open(snapshot, "r", encoding="utf-8", newline="") as handle:
-                    recovered = handle.read().replace("\r\n", "\n").replace("\r", "\n")
-                if recovered != _text(view):
-                    view.run_command("plist_tools_replace", {"text": recovered})
-            # Metadata binding alone does not initialize recovery: pathless
-            # session restores and lazy clone binding can happen before this.
-            _recovery_initialized.add(view.buffer_id())
+            _initialize_recovery(view, meta)
             _check_conflict(view)
             _schedule(view)
         except (OSError, ValueError) as error:
@@ -253,7 +292,7 @@ def _prepare(view):
             if _is_plist(view):
                 if path.lower().endswith(".mobileconfig") and not _text(view).lstrip("\ufeff \t\r\n").startswith("<"):
                     view.set_read_only(True)
-                    view.set_status("plist_tools_error", "Signed or encrypted mobileconfig profiles are unsupported (read-only)")
+                    view.set_status("plist_tools_error", "Signed/encrypted profile · use Plist Tools: Inspect Signed Profile")
                     return
                 view.settings().set("syntax", SYNTAX)
                 _schedule(view)
@@ -302,8 +341,6 @@ def _prepare(view):
                 meta = old
                 if old.get("pending") or text_hash(recovery_text) != old.get("saved_text_hash"):
                     sublime.status_message("Plist Tools: recovered pending edits for " + path)
-                if recovery_path != work:
-                    atomic_write(work, recovery_text.encode("utf-8"), fingerprint(work))
         if meta is None:
             meta = {"version": 1, "source": os.path.abspath(path), "format": "binary",
                     "fingerprint": before, "saved_text_hash": text_hash(xml), "pending": False}
@@ -334,6 +371,8 @@ def _save_source(view, target=None, output_format=None):
     output_format = output_format or meta["format"]
     payload = binary_from_xml(source) if output_format == "binary" else xml_bytes(source)
     destination = os.path.abspath(target) if target else meta["source"]
+    if _same_file_path(destination, view.settings().get("plist_tools_signed_source")):
+        raise ConflictError("The signed original is protected. Export an unsigned copy to a new path.")
     expected = meta["fingerprint"] if os.path.normcase(destination) == os.path.normcase(meta["source"]) else fingerprint(destination)
     # Persist recovery *before* touching the source, including invalid documents
     # through the ordinary native save fallback.
@@ -493,11 +532,16 @@ class PlistToolsSaveAllCommand(sublime_plugin.WindowCommand):
             if view.buffer_id() in seen:
                 continue
             seen.add(view.buffer_id())
-            if _source(view):
-                if view.is_dirty() or _meta(view).get("pending") or _meta(view).get("working_pending"):
-                    _save(view)
-            elif view.is_dirty():
-                view.run_command("save")
+            try:
+                if _source(view):
+                    meta = _meta(view)
+                    if view.is_dirty() or meta.get("pending") or meta.get("working_pending"):
+                        _save(view)
+                elif view.is_dirty():
+                    view.run_command("save")
+            except (OSError, ValueError, OverflowError, RecursionError) as error:
+                view.set_status("plist_tools_save_error", "PLIST NOT SAVED: {}".format(error))
+                _error(error)
 
 
 class PlistToolsSaveAsCommand(sublime_plugin.TextCommand):
@@ -512,7 +556,8 @@ class PlistToolsSaveAsCommand(sublime_plugin.TextCommand):
 
         def export(path):
             path = os.path.abspath(os.path.expanduser(path))
-            if path == view.file_name() or (_source(view) and os.path.normcase(path) == os.path.normcase(_source(view))):
+            if (_same_file_path(path, view.file_name()) or _same_file_path(path, _source(view))
+                    or _same_file_path(path, view.settings().get("plist_tools_signed_source"))):
                 _error("Save As exports a separate copy. Use Save or Convert Format for the current source.")
                 return
             if os.path.exists(path) and not sublime.ok_cancel_dialog("Replace {}?".format(path), "Replace"):
@@ -532,8 +577,20 @@ class PlistToolsSaveAsCommand(sublime_plugin.TextCommand):
 
 
 class PlistToolsConvertCommand(sublime_plugin.TextCommand):
+    def _can_convert_source(self):
+        view = self.view
+        if view.is_read_only():
+            return False
+        signed_source = view.settings().get("plist_tools_signed_source")
+        return not signed_source or bool(view.file_name()
+            and not _same_file_path(view.file_name(), signed_source)
+            and not _same_file_path(_source(view), signed_source))
+
     def run(self, edit, output_format):
         view = self.view
+        if not self._can_convert_source():
+            _error("This read-only or signed-profile view cannot be converted. Export an unsigned copy to a new path first.")
+            return
         try:
             if _source(view):
                 _save_source(view, output_format=output_format)
@@ -578,17 +635,18 @@ class PlistToolsConvertCommand(sublime_plugin.TextCommand):
             _error(error)
 
     def is_enabled(self, output_format):
-        return _is_plist(self.view)
+        return _is_plist(self.view) and self._can_convert_source()
 
 
 class PlistToolsRevertCommand(sublime_plugin.TextCommand):
     def run(self, edit):
         view = self.view
-        if (view.is_dirty() or _meta(view).get("pending")) and not sublime.ok_cancel_dialog(
-                "Discard PLIST edits and reload the source from disk?", "Revert"):
-            return
         try:
             meta = _meta(view)
+            _check_working_target(view)
+            if (view.is_dirty() or meta.get("pending") or meta.get("working_pending")) and not sublime.ok_cancel_dialog(
+                    "Discard PLIST edits and reload the source from disk?", "Revert"):
+                return
             before = fingerprint(meta["source"])
             with open(meta["source"], "rb") as handle:
                 data = handle.read(int(settings().get("max_binary_bytes", 8 * 1024 * 1024)) + 1)
@@ -602,12 +660,16 @@ class PlistToolsRevertCommand(sublime_plugin.TextCommand):
             parse_xml(text)
             if fingerprint(meta["source"]) != before:
                 raise ConflictError("Source changed while reloading.")
-            atomic_write(view.file_name(), text.encode("utf-8"), fingerprint(view.file_name()))
+            work = _working_path(view)
+            atomic_write(work, text.encode("utf-8"), fingerprint(work))
             meta.update({"format": "binary" if binary else "xml", "fingerprint": before,
                          "saved_text_hash": text_hash(text), "pending": False, "working_pending": False})
+            meta.pop("last_error", None)
             write_metadata(view.settings().get(META), meta)
             _bind(view, view.settings().get(META), meta)
             _native(view, "revert")
+            _failed_save.pop(view.buffer_id(), None)
+            view.erase_status("plist_tools_save_error")
             _check_conflict(view)
         except (OSError, ValueError, RecursionError) as error:
             _error(error)
