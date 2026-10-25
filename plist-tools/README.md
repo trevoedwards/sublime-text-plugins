@@ -1,6 +1,7 @@
 # Plist Tools
 
-PLIST editing for Sublime Text 4, using Python 3.8 and the standard library.
+PLIST editing for Sublime Text 4, using the Python 3.8 plugin API (run on
+Python 3.14 from build 4213) and the standard library.
 XML files stay XML. Binary files open as typed XML and save back to binary.
 There are no third-party Python dependencies, background services, default key
 bindings, or JSON conversions of property-list values. Signed profile inspection
@@ -124,7 +125,9 @@ Windows installation locations. If OpenSSL is unavailable on macOS,
 The [OpenSSL CMS command](https://docs.openssl.org/3.0/man1/openssl-cms/) verifies
 the content signature with `-verify -noverify`; certificate-chain trust is
 skipped. A bad signature fails rather than falling back to an unchecked decode.
-The macOS fallback uses the platform decoder's policy. **Plist Tools does not
+The macOS `/usr/bin/security cms` fallback applies the same policy: it reads
+each signer's status first and rejects anything other than a good signature or
+an untrusted signing certificate. **Plist Tools does not
 establish signer trust** on either path. Inspecting a profile does not make it
 safe or appropriate to deploy.
 
@@ -140,6 +143,8 @@ contain profile secrets; treat this directory like your source files.
 Save and Save As in a read-only inspection open the export flow. Exports cannot
 target the signed original, its aliases, the attached file or a managed binary
 source. Use ordinary Save to update an editable draft. The exported copy is not automatically opened.
+New export files get your normal file permissions (umask); drafts, recovery
+copies and their metadata are created readable only by you.
 Existing identifiers are retained. Editing an unsigned copy does not retain or
 re-create the original signature. Re-signing and certificate management are not
 provided.
@@ -199,6 +204,10 @@ exit/session recovery, as other text buffers do. Do not delete the recovery
 directory while pending edits are needed. Working copies may contain sensitive
 configuration values, so treat this directory like the source files. It is
 kept outside Sublime's disposable cache and is never automatically deleted.
+
+On macOS, avoid editing files in `~/Library/Preferences` while their app is
+running: `cfprefsd` caches preferences and can ignore or overwrite a file that
+is replaced on disk. Quit the app first, or use `defaults` for live changes.
 
 Source changes are detected on activation and before every commit. There is no
 silent merge or overwrite; use Revert to accept disk changes, or export edits
@@ -263,6 +272,8 @@ honored by Format XML.
 ```sh
 python -m unittest discover -s plist-tools/tests -v
 ```
+
+The tests run without Sublime Text, on Python 3.9 or later.
 
 The tests cover strict XML parsing, types, source offsets/key paths, formatting,
 unsupported binary values, atomic writes, conflicts and save lifecycle routing.

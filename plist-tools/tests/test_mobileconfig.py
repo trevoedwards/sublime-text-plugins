@@ -22,7 +22,7 @@ def payload(payload_type="com.example.app", suffix="one", **settings):
 
 
 def profile(*children):
-    result = plistlib.loads(make_profile())
+    result = plistlib.loads(make_profile().encode("utf-8"))
     result["PayloadContent"] = list(children)
     return result
 

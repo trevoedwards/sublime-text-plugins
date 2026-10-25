@@ -277,7 +277,7 @@ class PlistToolsExportProfileCommand(sublime_plugin.TextCommand):
                 before = fingerprint(path)
                 if before is not None and not sublime.ok_cancel_dialog("Replace {}?".format(path), "Replace"):
                     return
-                atomic_write(path, payload, before)
+                atomic_write(path, payload, before, private=False)
                 sublime.status_message("Plist Tools: exported unsigned XML profile · identifiers retained · " + path)
             except (OSError, ValueError) as error:
                 editor._error(error)

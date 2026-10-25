@@ -1,8 +1,10 @@
 """Decode a snapshot of a signed CMS profile without changing its source.
 
 OpenSSL verifies the content signature, but -noverify skips certificate-chain
-trust. The macOS security fallback uses the platform decoder's policy. Neither
-path establishes signer trust here. Encrypted containers are never decoded.
+trust. The macOS security fallback reads each signer's status and accepts only
+a good signature or an untrusted signing certificate, matching that policy.
+Neither path establishes signer trust here. Encrypted containers are never
+decoded.
 """
 import base64
 import binascii
@@ -14,6 +16,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 
 try:
     from .mobileconfig import is_profile
@@ -26,6 +29,9 @@ except ImportError:
 DEFAULT_MAX_BYTES = 16 * 1024 * 1024
 MAX_STDERR_BYTES = 64 * 1024
 _CMS_PREFIX = bytes.fromhex("2a864886f70d0107")
+# security cms reports chain trust and signature validity together. Like
+# OpenSSL -noverify, accept an untrusted signer but never a bad signature.
+_SECURITY_ACCEPTED = {"GoodSignature", "SigningCertNotTrusted"}
 
 
 class SignedProfileError(ValueError):
@@ -178,6 +184,18 @@ def _read_bounded(path, limit, description):
     return data
 
 
+def _check_security_signers(report):
+    """Reject unless every signer in a security cms -h report has a valid signature."""
+    text = report.decode("utf-8", errors="replace")
+    signers = sum(int(count) for count in re.findall(r"\bnsigners=(\d+);", text))
+    statuses = re.findall(r"\bsigner\d+\.status=(\w+);", text)
+    if signers < 1 or len(statuses) != signers:
+        raise SignedProfileError("The macOS CMS decoder did not report signer status; the signature could not be checked.")
+    rejected = sorted(set(statuses) - _SECURITY_ACCEPTED)
+    if rejected:
+        raise SignedProfileError("CMS signature verification failed ({}).".format(", ".join(rejected)))
+
+
 def _xml_text(data):
     # Respect common XML byte signatures before inspecting an ASCII declaration.
     if data.startswith((b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")):
@@ -216,29 +234,41 @@ def decode_signed_profile(path, openssl_path=None, timeout=15, max_bytes=DEFAULT
         if kind != "signed":
             raise SignedProfileError("Input is not a recognized signed CMS profile.")
         decoder, executable = _resolve_decoder(openssl_path)
+        deadline = time.monotonic() + timeout
         with tempfile.TemporaryDirectory(prefix="plist-tools-cms-") as directory:
             snapshot = os.path.join(directory, "input.cms")
             output = os.path.join(directory, "output.plist")
             diagnostic = os.path.join(directory, "stderr.txt")
             with open(snapshot, "wb") as handle:
-                handle.write(data)
-            if decoder == "openssl":
-                args = [executable, "cms", "-verify", "-noverify", "-inform", encoding,
-                        "-in", snapshot, "-out", output]
-            else:
-                args = [executable, "cms", "-D", "-i", snapshot, "-o", output]
-            kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
-                      "shell": False, "timeout": timeout}
+                # OpenSSL is told the encoding; security cms only reads DER/BER.
+                handle.write(data if decoder == "openssl" else decoded)
+            kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "shell": False}
             if sys.platform == "win32":
                 kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-            with open(diagnostic, "wb") as stderr:
-                result = subprocess.run(args, stderr=stderr, **kwargs)
-            details = _read_bounded(diagnostic, MAX_STDERR_BYTES, "Decoder stderr")
-            if result.returncode:
-                # Cap displayed diagnostics separately from the stderr read bound.
-                message = details[:2048].decode("utf-8", errors="replace").strip()
-                raise SignedProfileError("CMS decoder failed (exit {}).{}".format(
-                    result.returncode, " " + message if message else ""))
+
+            def run(args, limit):
+                with open(diagnostic, "wb") as stderr:
+                    result = subprocess.run(args, stderr=stderr, timeout=limit, **kwargs)
+                details = _read_bounded(diagnostic, MAX_STDERR_BYTES, "Decoder stderr")
+                if result.returncode:
+                    # Cap displayed diagnostics separately from the stderr read bound.
+                    message = details[:2048].decode("utf-8", errors="replace").strip()
+                    raise SignedProfileError("CMS decoder failed (exit {}).{}".format(
+                        result.returncode, " " + message if message else ""))
+
+            if decoder == "openssl":
+                run([executable, "cms", "-verify", "-noverify", "-inform", encoding,
+                     "-in", snapshot, "-out", output], timeout)
+            else:
+                # security cms -D decodes even a bad signature with exit status 0.
+                # Check the signer report first, so tampered content is never shown.
+                report = os.path.join(directory, "signers.txt")
+                run([executable, "cms", "-D", "-n", "-h", "1", "-i", snapshot, "-o", report], timeout)
+                _check_security_signers(_read_bounded(report, MAX_STDERR_BYTES, "Decoder signer report"))
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(executable, timeout)
+                run([executable, "cms", "-D", "-i", snapshot, "-o", output], remaining)
             content = _read_bounded(output, max_bytes, "Decoded profile output")
             # XML normalizes literal newlines to LF. Match that behavior in the
             # editor buffer while leaving character references such as &#13;

@@ -214,10 +214,12 @@ def parse_xml(source):
             compact = re.sub(r"[ \t\r\n]", "", text)
             try:
                 result = base64.b64decode(compact, validate=True)
-                if base64.b64encode(result).decode("ascii") != compact:
-                    fail("Data must use canonical base64 padding.", node)
             except (ValueError, UnicodeEncodeError):
                 fail("Invalid base64 data.", node)
+            # PlistError is a ValueError; check outside the try so this
+            # message is not replaced by the generic one above.
+            if base64.b64encode(result).decode("ascii") != compact:
+                fail("Data must use canonical base64 encoding.", node)
         node.value = result
         return result
 
@@ -268,6 +270,8 @@ def load_binary(data):
                 seconds = struct.unpack(">d", data[offset + 1:offset + 9])[0]
                 if not math.isfinite(seconds) or not seconds.is_integer():
                     raise PlistError("Binary dates with fractional seconds cannot round-trip through PLIST XML; this file is read-only.")
+    except PlistError:
+        raise
     except (ValueError, IndexError, struct.error) as error:
         raise PlistError("Unsupported binary date or object table: {}".format(error)) from error
 
@@ -300,10 +304,11 @@ def load_binary(data):
     check(value, set(), 0)
     try:
         xml = plistlib.dumps(value, fmt=plistlib.FMT_XML, sort_keys=False).decode("utf-8")
-        if not semantic_equal(value, parse_xml(xml).value):
-            raise PlistError("Binary values cannot round-trip through XML without changing their types, order or floating-point bits.")
+        round_trip = parse_xml(xml).value
     except (ValueError, TypeError, OverflowError) as error:
         raise PlistError("Binary values cannot safely round-trip through XML: {}".format(error)) from error
+    if not semantic_equal(value, round_trip):
+        raise PlistError("Binary values cannot round-trip through XML without changing their types, order or floating-point bits.")
     return xml
 
 
@@ -331,5 +336,7 @@ def semantic_equal(left, right):
 def xml_bytes(source):
     """Export UTF-8 XML with a matching declaration, preserving the document body."""
     parse_xml(source)
-    source = re.sub(r"(<\?xml\b[^?]*encoding\s*=\s*)['\"][^'\"]+['\"]", r'\1"UTF-8"', source, count=1)
+    # Only the declaration at the start of the document; never text inside
+    # strings, CDATA or comments that happens to look like one.
+    source = re.sub(r"\A(﻿?<\?xml\b[^?]*\bencoding\s*=\s*)['\"][^'\"]+['\"]", r'\1"UTF-8"', source, count=1)
     return source.encode("utf-8")

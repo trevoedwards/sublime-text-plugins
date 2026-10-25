@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import secrets
 import stat
 import tempfile
 
@@ -59,15 +60,34 @@ def _replace_windows(path, temporary):
         pass
 
 
-def atomic_write(path, data, expected):
-    """Compare source twice, then replace from a flushed same-directory temp file."""
+def _shared_temporary(directory):
+    """Like mkstemp, but the umask (not a fixed 0600) decides the new file's mode."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    for _ in range(100):
+        temporary = os.path.join(directory, ".plist-tools-" + secrets.token_hex(8))
+        try:
+            return os.open(temporary, flags, 0o666), temporary
+        except FileExistsError:
+            continue
+    raise FileExistsError("Could not create a temporary file in {}.".format(directory))
+
+
+def atomic_write(path, data, expected, private=True):
+    """Compare source twice, then replace from a flushed same-directory temp file.
+
+    Existing files keep their mode. New files are owner-only when private
+    (recovery copies, drafts, metadata), otherwise they follow the umask.
+    """
     path = os.path.abspath(path)
     before = fingerprint(path)
     if before != expected:
         raise ConflictError("The file changed in another application. Revert or Save As to a new path; it was not overwritten.")
     if before and not before["mode"] & stat.S_IWUSR:
         raise PermissionError("The destination is read-only.")
-    fd, temporary = tempfile.mkstemp(prefix=".plist-tools-", dir=os.path.dirname(path))
+    if private or before:
+        fd, temporary = tempfile.mkstemp(prefix=".plist-tools-", dir=os.path.dirname(path))
+    else:
+        fd, temporary = _shared_temporary(os.path.dirname(path))
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(data)

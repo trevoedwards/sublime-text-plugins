@@ -35,7 +35,7 @@ def _source(view):
         return source
     # Cloned views may share the buffer without inheriting per-view settings.
     path = view.file_name()
-    if path and os.path.normcase(os.path.dirname(path)) == os.path.normcase(_recovery_dir(create=False)):
+    if _is_working_file(path):
         meta_path = os.path.splitext(path)[0] + ".json"
         if os.path.isfile(meta_path):
             try:
@@ -76,6 +76,19 @@ def _recovery_dir(create=True):
     if create:
         os.makedirs(path, exist_ok=True)
     return path
+
+
+def _is_working_file(path):
+    # Only <hash>.plist is a working copy. Its .json metadata and .pending
+    # snapshot must open as ordinary files, never bound to the source.
+    return bool(path and path.lower().endswith(".plist")
+                and os.path.normcase(os.path.dirname(os.path.abspath(path))) == os.path.normcase(_recovery_dir(create=False)))
+
+
+def _looks_signed(header):
+    """Non-empty profile bytes on disk that are not XML (DER, BER or PEM CMS)."""
+    content = header.lstrip(b"\xef\xbb\xbf\xff\xfe\x00 \t\r\n")
+    return bool(content) and not content.startswith(b"<")
 
 
 def _paths(source):
@@ -268,8 +281,7 @@ def _prepare(view):
         return
     # A restored recovery file is identifiable even if session settings vanished.
     meta_path = os.path.splitext(path)[0] + ".json"
-    recovery = os.path.normcase(os.path.abspath(os.path.dirname(path))) == os.path.normcase(_recovery_dir(create=False))
-    if recovery and os.path.isfile(meta_path):
+    if _is_working_file(path) and os.path.isfile(meta_path):
         try:
             meta = _read_meta(meta_path)
             _bind(view, meta_path, meta)
@@ -287,13 +299,21 @@ def _prepare(view):
     before = None
     try:
         with open(path, "rb") as handle:
-            header = handle.read(8)
-        if header != b"bplist00":
+            header = handle.read(4096)
+        if header[:8] != b"bplist00":
             if _is_plist(view):
-                if path.lower().endswith(".mobileconfig") and not _text(view).lstrip("\ufeff \t\r\n").startswith("<"):
+                # Decide from the file on disk, not the buffer: an empty new
+                # profile or a buffer cleared mid-edit must stay editable.
+                if path.lower().endswith(".mobileconfig") and _looks_signed(header):
                     view.set_read_only(True)
+                    view.settings().set("plist_tools_signed_lock", True)
                     view.set_status("plist_tools_error", "Signed/encrypted profile · use Plist Tools: Inspect Signed Profile")
                     return
+                if view.settings().get("plist_tools_signed_lock"):
+                    # The file on disk is no longer signed (for example after a reload).
+                    view.settings().erase("plist_tools_signed_lock")
+                    view.set_read_only(False)
+                    view.erase_status("plist_tools_error")
                 view.settings().set("syntax", SYNTAX)
                 _schedule(view)
             return
@@ -364,16 +384,15 @@ def _prepare(view):
             _error(error)
 
 
-def _save_source(view, target=None, output_format=None):
+def _save_source(view, output_format=None):
     _check_working_target(view)
     meta = _meta(view)
     source = _text(view)
     output_format = output_format or meta["format"]
     payload = binary_from_xml(source) if output_format == "binary" else xml_bytes(source)
-    destination = os.path.abspath(target) if target else meta["source"]
+    destination = meta["source"]
     if _same_file_path(destination, view.settings().get("plist_tools_signed_source")):
         raise ConflictError("The signed original is protected. Export an unsigned copy to a new path.")
-    expected = meta["fingerprint"] if os.path.normcase(destination) == os.path.normcase(meta["source"]) else fingerprint(destination)
     # Persist recovery *before* touching the source, including invalid documents
     # through the ordinary native save fallback.
     meta["pending"] = True
@@ -382,10 +401,7 @@ def _save_source(view, target=None, output_format=None):
     atomic_write(snapshot, source.encode("utf-8"), fingerprint(snapshot))
     write_metadata(view.settings().get(META), meta)
     _recovery_initialized.add(view.buffer_id())
-    result = atomic_write(destination, payload, expected)
-    if target and os.path.normcase(destination) != os.path.normcase(meta["source"]):
-        # Save As exports a copy, keeping the source association explicit.
-        return
+    result = atomic_write(destination, payload, meta["fingerprint"])
     meta.update({"fingerprint": result, "format": output_format,
                  "saved_text_hash": text_hash(source), "pending": False})
     write_metadata(view.settings().get(META), meta)
@@ -565,7 +581,7 @@ class PlistToolsSaveAsCommand(sublime_plugin.TextCommand):
             try:
                 text = _text(view)
                 payload = binary_from_xml(text) if output_format == "binary" else xml_bytes(text)
-                atomic_write(path, payload, fingerprint(path))
+                atomic_write(path, payload, fingerprint(path), private=False)
                 sublime.status_message("Plist Tools: exported " + path)
             except (OSError, ValueError, OverflowError, RecursionError) as error:
                 _error(error)

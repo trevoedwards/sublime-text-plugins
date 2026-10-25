@@ -59,7 +59,11 @@ class DecoderTests(unittest.TestCase):
         def run(args, **kwargs):
             output = args[args.index("-out") + 1] if "-out" in args else args[args.index("-o") + 1]
             with open(output, "wb") as handle:
-                handle.write(self.profile if content is None else content)
+                if "-n" in args:
+                    handle.write(b'SMIME: \tlevel=1.2; type=signedData; nsigners=1; \n'
+                                 b'\t\tsigner0.id="(null)"; signer0.status=SigningCertNotTrusted; \n')
+                else:
+                    handle.write(self.profile if content is None else content)
             kwargs["stderr"].write(stderr)
             return subprocess.CompletedProcess(args, returncode)
         return run
