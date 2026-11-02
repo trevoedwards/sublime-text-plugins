@@ -58,8 +58,9 @@ _REF_DEF = re.compile(
 _CODE_SPAN = re.compile(r"(`+)(.+?)(?<!`)\1(?!`)", re.S)
 _ESCAPE = re.compile(r"\\([\\`*_{}\[\]()#+\-.!<>|~])")
 _AUTOLINK = re.compile(r"<((?:https?|ftp|mailto):[^\s<>]+)>")
-_IMAGE = re.compile(r"!\[([^\]]*)\]\(\s*<?([^\s)>]*)>?(?:\s+\"([^\"]*)\")?\s*\)")
-_LINK = re.compile(r"\[([^\]]+)\]\(\s*<?([^\s)>]*)>?(?:\s+\"([^\"]*)\")?\s*\)")
+# Link destinations may contain balanced parentheses, e.g. a Wikipedia URL.
+_IMAGE = re.compile(r"!\[([^\]]*)\]\(\s*<?((?:[^\s()>]|\([^\s()]*\))*)>?(?:\s+\"([^\"]*)\")?\s*\)")
+_LINK = re.compile(r"\[([^\]]+)\]\(\s*<?((?:[^\s()>]|\([^\s()]*\))*)>?(?:\s+\"([^\"]*)\")?\s*\)")
 _REF_LINK = re.compile(r"(!?)\[([^\]]+)\](?:\[([^\]]*)\])?")
 # GFM extended autolinks: a "www." link must start a word or follow "*_~(".
 _BARE_URL = re.compile(r"\bhttps?://[^\s<>\x00]+|(?<![^\s*_~(])www\.[^\s<>\x00]+")
