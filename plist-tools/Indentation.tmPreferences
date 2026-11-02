@@ -3,7 +3,7 @@
     <key>name</key><string>PLIST indentation</string>
     <key>scope</key><string>text.xml.plist</string>
     <key>settings</key><dict>
-        <key>increaseIndentPattern</key><string>^\s*&lt;(?:dict|array|plist)\b[^&gt;]*&gt;\s*$</string>
+        <key>increaseIndentPattern</key><string>^\s*&lt;(?:dict|array|plist)\b[^&gt;]*(?&lt;!/)&gt;\s*$</string>
         <key>decreaseIndentPattern</key><string>^\s*&lt;/(?:dict|array|plist)&gt;</string>
     </dict>
 </dict></plist>
